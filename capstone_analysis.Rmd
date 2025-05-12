@@ -1,0 +1,323 @@
+---
+title: "Opioid Hospitalization and Unemployment Comparison"
+author: "Kim Forsch"
+date: "2025-05-07"
+output: html_document
+---
+## Introduction
+In many provinces in Canada more people have ended up in the hospital because of opioid overdoses—and at the same time, the number of people without jobs has gone up and down. Therefore it is natural to wonder if losing a job makes someone more likely to misuse opioids. It hasn’t been clear whether unemployment really drives overdose rates, and if so whether it happens right away or later on.
+
+This notebook is a based on how opioid-related hospitalizations have climbed even as economic conditions fluctuate across the country’s provinces. Between 2016 and 2024, some provinces saw a sharp upswing in opioid overdose related hospital visits, while unemployment rates also fluctuated up and down. This raises the question of whether economic distress might be linked to harmful use of opioids.
+
+This study was completed using data from Canada for the years 2016 - 2024 (inclusive) and in 9 provinces in Canada: Alberta, British Columbia, Manitoba, New Brunswick, Newfoundland and Labrador, Nova Scotia, Ontario, Prince Edward Island and Saskatchewan. The reason for the limitation on years and provinces was due to a lack of complete data from one or the other dataset. 
+
+
+
+###Research questions:
+
+1. Is there an existing association between the provincial unemployment rate and the opioid overdose hospitalization rate?
+
+2. Does a rise in unemployment in year predict a change in overdose rate in the following year?
+
+
+
+### What was done:###
+**Counted overdoses:** Got official data on how many opioid related hospital visits each of the provinces had each year and turned that rate into a rate per 100,000 residents so large and small provinces could be compared fairly.
+
+**Gathered jobless rates:** obtained official data for each of these province's unemployment rates for the same years.
+
+**Compared them:** Do years with higher unemployment rates also have more overdoses?
+
+**Looking ahead:** Does a jump in unemployment one year predict a change in overdoses the next year?
+
+### What was found: 
+* When unemployment went up in one year, overdose hospital visits tended to go down a bit in the following year. That pattern showed up consistently enough that it’s unlikely to be a fluke. 
+* Looking just within the same year, higher joblessness did line up with slightly more overdoses, but it explained only about 10% of the rise and fall in overdose rates, so it’s not a strong driver.
+* When we ran the numbers province by province, nearly all showed only tiny or no clear relationship between unemployment and overdoses.
+
+### In conclusion:
+Losing a job doesn’t appear to trigger more overdoses right away. In fact, if anything, a higher unemployment rate this year is followed by a small drop in overdoses next year.
+
+The two trends move together only a little. Joblessness explains only a small slice of why overdose rates go up or down.
+
+Things are similar across Canada for the provinces we analyzed. No single province stands out with a very different pattern.
+
+While economics and mental stress certainly matter for public health, unemployment by itself is only a modest piece of the overdose puzzle in Canada.
+
+### Data Sources
+**Opioid hospitalizations:**
+* Substance-related Overdose and Mortality Surveillance Task Group on behalf of the Council of Chief Medical Officers of Health.[Opioid and Stimulant related Harms in Canada.](https://health-infobase.canada.ca/substance-related-harms/opioids-stimulants/) Ottawa: Public Health Agency of Canada; March 
+
+**Unemployment rates:**
+Statistics Canada. Table 14-10-0287-03  [Labour force characteristics by province, monthly, seasonally adjusted] (https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1410028703)
+DOI: [https://doi.org/10.25318/1410028701-eng] (https://doi.org/10.25318/1410028701-eng)
+
+Github: https://github.com/kmforsch/opioid-unemployment-capstone.git
+
+## Setup
+
+### Set folder paths
+
+```{r Set folder paths}
+data_path <- "data/"
+output_path <- "outputs/"
+plots_path <- "plots/"
+scripts_path <- "scripts/"
+```
+
+### Load packages
+```{r}
+source("scripts/requirements.R")
+```
+
+### Set global chunk options
+
+```{r Set global chunk options}
+knitr::opts_chunk$set(
+  echo = TRUE,        # show your code
+  warning = FALSE,    # hide warnings if desired
+  message = FALSE     # hide messages
+)
+```
+### Select provinces
+```{r Select provinces}
+
+provinces <- c(
+  "Alberta",
+  "British Columbia",
+  "Manitoba",
+  "New Brunswick",
+  "Newfoundland and Labrador",
+  "Nova Scotia",
+  "Ontario",
+  "Prince Edward Island",
+  "Saskatchewan"
+)# Read the full file
+```
+### Set starting dfs
+```{r starting dfs}
+unemp_df <- read_csv(paste0(data_path, "unemployment_clean.csv")) 
+opioid_raw <- read_csv(paste0(data_path, "substance_harms.csv")) %>% 
+  clean_names()
+```
+### Opioid data
+```{r opioid data}
+opioid_df <- opioid_raw %>%
+  filter(
+    type_event == "Total opioid-related poisoning hospitalizations",
+    substance == "Opioids",
+    time_period == "By year",
+    unit == "Number",
+    region %in% provinces
+  ) %>% 
+  mutate(
+    year = as.integer(str_sub(year_quarter, 1, 4)),
+    overdose_count = as.numeric(value)
+  ) %>% 
+  select(
+    year,
+    province = region,
+    overdose_count
+  )
+```
+# unemployment rates 
+```{r unemp_rates}
+unemp_rates <- unemp_df %>%
+  filter(labour_force_characteristics == "Unemployment rate") %>%
+  mutate(
+    date = ym(ref_date),
+    year = year(date),
+    unemployment_rate = value
+  ) %>%
+  select(province = geo, year, unemployment_rate)
+```
+# Population (for per‑capita rates)
+```{r population for per-capita rates}
+unemp_pop_df <- unemp_df %>%
+  filter(labour_force_characteristics == "Population") %>%
+  mutate(
+    date = ym(ref_date),
+    year = year(date),
+    population_count = value * 1000
+  ) %>%
+  select(province = geo, year, population_count)
+```
+## Annualize employment rates
+```{r annualize employment rates}
+unemp_annual <- unemp_rates %>%
+  group_by(province, year) %>%
+  summarize(
+    unemployment_rate = mean(unemployment_rate, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+## Annualize population counts
+```{r annualize population counts}
+pop_annual <- unemp_pop_df %>%
+  group_by(province, year) %>%
+  summarize(
+    population_count = mean(population_count, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+### Merge data
+```{r}
+final_df <- opioid_df %>%
+  inner_join(unemp_annual, by = c("province","year")) %>%
+  left_join (pop_annual,   by = c("province","year")) %>%
+  mutate(
+    overdose_rate = (overdose_count / population_count) * 100000
+  )
+```
+## Check if there is only one row per year
+```{r Check if there is only one row per year}
+#final_df %>% count(province, year) %>% filter(n != 1)
+```
+## Plots
+
+### P1-Time-series-of-overdose-rates-by-province
+```{r}
+plot_1 <- ggplot(final_df, aes(x = year, y = overdose_rate, color = province)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.5) +
+  labs(
+    title    = "Annual Opioid Overdose Rate by Province",
+    x        = "Year",
+    y        = "Overdose Rate (per 100,000)",
+    color    = "Province"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "bottom")
+plot_1
+```
+
+```{r - save-overdose-time-series, echo=FALSE}
+# ensure the folder exists
+if (!dir.exists(plots_path)) dir.create(plots_path)
+# save each plot
+ggsave(
+  filename = paste0(plots_path, "overdose_time_series.png"),
+  plot     = plot_1,
+  width    = 8,
+  height   = 5,
+  bg = "white"
+)
+```
+
+
+### Scatterplot of unemployment rate vs. overdose rate (with smoothing)
+```{r unemployment-vs-overdose}
+plot_2 <- ggplot(final_df, aes(x = unemployment_rate, y = overdose_rate)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE) +
+  facet_wrap(~province, scales = "free") +
+  labs(
+    title = "Overdose Rate vs. Unemployment Rate",
+    x     = "Unemployment Rate (%)",
+    y     = "Overdose Rate (per 100,000)"
+  ) +
+  theme_minimal(base_size = 14)
+plot_2
+```
+
+```{r save-scatterpoint-plot, echo=FALSE}
+# ensure the folder exists
+if (!dir.exists(plots_path)) dir.create(plots_path)
+# save each plot
+ggsave(
+  filename = paste0(plots_path, "overdose_scatterpoint.png"),
+  plot     = plot_2,
+  width    = 8,
+  height   = 5,
+  bg = "white"
+)
+```
+
+### Choropleth map of average overdose rate
+```{r Choropleth-map-of-average-overdose-rate}
+# Get Canadian provinces
+can_provs <- ne_states(country="canada", returnclass = "sf")
+prov_avg <- final_df %>%
+  group_by(province) %>%
+  summarize(avg_overdose = mean(overdose_rate, na.rm = TRUE))
+
+# Join and plot
+map_df <- left_join(can_provs, prov_avg, by = c("name_en" = "province"))
+
+plot_3 <- ggplot(map_df) +
+  geom_sf(aes(fill = avg_overdose), color = "white") +
+  scale_fill_viridis_c(option = "plasma", na.value = "grey80") +
+  labs(
+    title    = "Average Opioid Overdose Rate by Province",
+    fill     = "Avg Rate"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text      = element_blank(),
+    axis.ticks     = element_blank(),
+    panel.grid     = element_blank()
+  )
+plot_3
+```
+
+```{r}
+ggsave(
+  filename = paste0(plots_path, "choropleth_map.png"),
+  plot     = plot_3,
+  width    = 8,
+  height   = 5,
+  bg       = "white"
+)
+```
+
+### Provincial slopes
+```{r provincial-slopes}
+prov_models <- final_df %>%
+  group_by(province) %>%
+  do(tidy(lm(overdose_rate~unemployment_rate, data=.))) %>%
+  filter(term=="unemployment_rate") %>%
+  select(province, slope=estimate, p.value)
+
+plot_4 <- ggplot(prov_models, aes(slope, reorder(province,slope), fill=(p.value<0.05))) +
+  geom_col(show.legend=FALSE) +
+  geom_vline(xintercept=0, linetype="dashed") +
+  labs(
+    title="Provincial Slopes: Overdose Rate vs Unemployment",
+    x="∆ Overdose Rate per 1% ∆ Unemployment",
+    y=""
+  ) +
+  theme_minimal()
+plot_4
+```
+
+```{r}
+ggsave(
+  filename = paste0(plots_path, "provincial_slopes.png"),
+  plot     = plot_4,
+  width    = 8,
+  height   = 5,
+  bg       = "white"
+)
+```
+
+
+## Regression Analysis
+
+```{r Regression Analysis}
+model <- lm(overdose_rate ~ unemployment_rate, data=final_df)
+summary(model)
+glance(model)
+```
+## Lagged analysis
+
+```{r Lagged analysis}
+lag_df <- final_df %>%
+  arrange(province,year) %>%
+  group_by(province) %>%
+  mutate(unemp_lag1=lag(unemployment_rate)) %>%
+  filter(!is.na(unemp_lag1))
+
+lag_model <- lm(overdose_rate~unemp_lag1, data=lag_df)
+summary(lag_model)
+```
